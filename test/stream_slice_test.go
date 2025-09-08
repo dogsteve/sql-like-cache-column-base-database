@@ -2,8 +2,6 @@ package test
 
 import (
 	"a-eighty/data_structure/slice"
-	"a-eighty/data_structure/stream"
-	"fmt"
 	"runtime"
 	"sync"
 	"testing"
@@ -25,21 +23,4 @@ func TestStream(t *testing.T) {
 	}
 	wg.Wait()
 
-	ttlSlice := stream.From[int](slice)
-	result := ttlSlice.
-		Filter(func(value int) bool {
-			return value%2 == 0
-		}).
-		Map(func(value int) int {
-			fmt.Println("mapping value", value)
-			return value * 10
-		}).
-		Order(func(a, b int) bool {
-			return a < b
-		}).
-		Limit(10).
-		Offset(0).
-		Collect()
-
-	fmt.Println(len(result))
 }
