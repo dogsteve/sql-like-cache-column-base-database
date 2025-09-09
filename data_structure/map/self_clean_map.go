@@ -32,6 +32,38 @@ func NewTTLMap[K any, V any]() *TTLMap[K, V] {
 	return m
 }
 
+/*func (ttlMap *TTLMap[K, V]) SortKeys() []K {
+	var keys []K
+	ttlMap.innerMap.Range(func(key, value any) bool {
+		keys = append(keys, key)
+		return true
+	})
+
+	sort.Slice(keys, func(i, j int) bool {
+
+		keyI := any(keys[i])
+		keyJ := any(keys[j])
+		switch vI := keyI.(type) {
+		case int:
+			if vJ, ok := keyJ.(int); ok {
+				return vI < vJ
+			}
+
+			return true
+		case string:
+			if vJ, ok := keyJ.(string); ok {
+				return vI < vJ
+			}
+
+			return false
+		default:
+
+			return false
+		}
+	})
+	return keys
+}*/
+
 func (ttlMap *TTLMap[K, V]) Set(key K, value *V, ttl time.Duration) {
 	var expiration int64
 	if ttl == -1 {

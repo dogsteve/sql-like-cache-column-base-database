@@ -16,8 +16,7 @@ func bToMb(b uint64) uint64 {
 	return b / 1024 / 1024
 }
 
-func TestMemCache(t *testing.T) {
-
+func doTestMemCache(t *testing.T) {
 	map_table.InitDataBase()
 	map_table.CreateDatabase("test")
 	map_table.CreateTable("test", "employees")
@@ -42,7 +41,7 @@ func TestMemCache(t *testing.T) {
 
 	sql := "INSERT INTO employees (id, name, department, hire_date) VALUES (%d, 'John Doe', 'Engineering', '2023-01-15');"
 
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 5000; i++ {
 		formatedSql := fmt.Sprintf(sql, i)
 		sqlSession.ExecuteSQL(formatedSql)
 	}
@@ -87,5 +86,10 @@ func TestMemCache(t *testing.T) {
 	fmt.Printf("  Final Heap Alloc: %v MiB\n", bToMb(memStatsAfter.Alloc))
 	fmt.Println("CPU profile saved to select_cpu.prof")
 	fmt.Println("---------------------------------")
+}
 
+func TestMemCache(t *testing.T) {
+	for i := 0; i < 10; i++ {
+		doTestMemCache(t)
+	}
 }
