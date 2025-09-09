@@ -17,7 +17,6 @@ func HandleSelect(databaseName string, selectStmt *sqlparser.Select) ([]map[stri
 		return nil, err
 	}
 
-	// 3. Handle WHERE clause using the builder from where.go.
 	predicateFunction := func(map[string]any) bool {
 		return true
 	}
@@ -28,7 +27,6 @@ func HandleSelect(databaseName string, selectStmt *sqlparser.Select) ([]map[stri
 		}
 	}
 
-	// 4. Handle ORDER BY clause.
 	sortFunction := func(a, b map[string]any) bool {
 		return true
 	}
@@ -48,16 +46,15 @@ func HandleSelect(databaseName string, selectStmt *sqlparser.Select) ([]map[stri
 			mapA, errA := objectToMap(a)
 			mapB, errB := objectToMap(b)
 			if errA != nil || errB != nil {
-				return false // Cannot compare if conversion fails.
+				return false
 			}
 
 			valA, okA := mapA[fieldName]
 			valB, okB := mapB[fieldName]
 			if !okA || !okB {
-				return false // Cannot compare if field is missing.
+				return false
 			}
 
-			// Generic comparison logic.
 			var isLess bool
 			switch vA := valA.(type) {
 			case float64:
@@ -69,7 +66,7 @@ func HandleSelect(databaseName string, selectStmt *sqlparser.Select) ([]map[stri
 					isLess = vA < vB
 				}
 			default:
-				// Fallback to string comparison for other types.
+
 				isLess = fmt.Sprint(valA) < fmt.Sprint(valB)
 			}
 
@@ -80,7 +77,6 @@ func HandleSelect(databaseName string, selectStmt *sqlparser.Select) ([]map[stri
 		}
 	}
 
-	// 5. Handle LIMIT and OFFSET.
 	var limitVal *uint64 = nil
 	var offsetVal *uint64 = nil
 	if selectStmt.Limit != nil {
@@ -98,18 +94,14 @@ func HandleSelect(databaseName string, selectStmt *sqlparser.Select) ([]map[stri
 		}
 	}
 
-	// 6. Execute the stream and return the results.
 	result := table.QueryWithCriteria(predicateFunction, sortFunction, limitVal, offsetVal)
 	return result, nil
 }
 
-// sliceDataProvider is a lightweight implementation of the StreamDataProvider interface that wraps a simple slice.
-// This is essential for subquery execution.
 type sliceDataProvider[T any] struct {
 	data []T
 }
 
-// Range iterates over the slice, applying offset and limit.
 func (s *sliceDataProvider[T]) Range(f func(value T) bool, offset *uint64, limit *uint64) {
 	items := s.data
 
@@ -118,7 +110,7 @@ func (s *sliceDataProvider[T]) Range(f func(value T) bool, offset *uint64, limit
 		start = *offset
 	}
 	if start >= uint64(len(items)) {
-		return // Offset is out of bounds.
+		return
 	}
 	items = items[start:]
 

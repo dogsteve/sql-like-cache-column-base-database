@@ -5,62 +5,58 @@ import (
 	"strconv"
 
 	"github.com/bytedance/sonic"
+	"github.com/davecgh/go-spew/spew"
 	"vitess.io/vitess/go/vt/sqlparser"
 )
 
-// BuildPredicateFromExpr creates a filter predicate function from a SQL WHERE clause expression (AST).
-// It uses a map-based comparison for flexibility, converting the input object into a map to evaluate conditions.
 func BuildPredicateFromExpr[T any](expr sqlparser.Expr) (func(T) bool, error) {
 	mapPredicate, err := buildMapPredicate(expr)
 	if err != nil {
 		return nil, err
 	}
 
-	// The final predicate function converts the object to a map and then evaluates it.
 	return func(obj T) bool {
 		objMap, err := objectToMap(obj)
 		if err != nil {
-			// If conversion fails, the object cannot be matched.
+
 			return false
 		}
 		return mapPredicate(objMap)
 	}, nil
 }
 
-// buildMapPredicate is the recursive core that builds a predicate for a map.
 func buildMapPredicate(expr sqlparser.Expr) (func(map[string]interface{}) bool, error) {
-	switch e := expr.(type) {
+	switch expression := expr.(type) {
 	case *sqlparser.AndExpr:
-		left, err := buildMapPredicate(e.Left)
+		left, err := buildMapPredicate(expression.Left)
 		if err != nil {
 			return nil, err
 		}
-		right, err := buildMapPredicate(e.Right)
+		right, err := buildMapPredicate(expression.Right)
 		if err != nil {
 			return nil, err
 		}
 		return func(m map[string]interface{}) bool { return left(m) && right(m) }, nil
 
 	case *sqlparser.OrExpr:
-		left, err := buildMapPredicate(e.Left)
+		left, err := buildMapPredicate(expression.Left)
 		if err != nil {
 			return nil, err
 		}
-		right, err := buildMapPredicate(e.Right)
+		right, err := buildMapPredicate(expression.Right)
 		if err != nil {
 			return nil, err
 		}
 		return func(m map[string]interface{}) bool { return left(m) || right(m) }, nil
 
 	case *sqlparser.ComparisonExpr:
-		return buildComparisonPredicate(e)
+		return buildComparisonPredicate(expression)
 
 	default:
 		return nil, fmt.Errorf("unsupported WHERE expression type: %T", expr)
 	}
 }
 
-// buildComparisonPredicate handles a direct comparison (e.g., `id = 5`).
 func buildComparisonPredicate(expr *sqlparser.ComparisonExpr) (func(map[string]interface{}) bool, error) {
 	col, ok := expr.Left.(*sqlparser.ColName)
 	if !ok {
@@ -68,7 +64,7 @@ func buildComparisonPredicate(expr *sqlparser.ComparisonExpr) (func(map[string]i
 	}
 	fieldName := col.Name.String()
 
-	lit, ok := expr.Right.(*sqlparser.ComparisonExpr)
+	lit, ok := expr.Right.(*sqlparser.Literal)
 	if !ok {
 		return nil, fmt.Errorf("right side of comparison must be a literal value, got %T", expr.Right)
 	}
@@ -76,16 +72,15 @@ func buildComparisonPredicate(expr *sqlparser.ComparisonExpr) (func(map[string]i
 	return func(objMap map[string]interface{}) bool {
 		fieldValue, ok := objMap[fieldName]
 		if !ok {
-			return false // Field does not exist in the object map.
+			return false
 		}
 		return compare(fieldValue, lit, expr.Operator)
 	}, nil
 }
 
-// compare performs a type-aware comparison between a field value and a SQL literal.
-func compare(fieldValue interface{}, literal *sqlparser.ComparisonExpr, op sqlparser.ComparisonExprOperator) bool {
-	// JSON unmarshaling uses float64 for all numbers, so we handle that as the primary numeric type.
-	if f64, ok := fieldValue.(float64); ok {
+func compare(fieldValue interface{}, literal *sqlparser.Literal, op sqlparser.ComparisonExprOperator) bool {
+	stringFieldValue := spew.Sprintf("%v", fieldValue)
+	if f64Val, err := strconv.ParseFloat(stringFieldValue, 64); err == nil {
 		litStr := sqlparser.String(literal)
 		litVal, err := strconv.ParseFloat(litStr, 64)
 		if err != nil {
@@ -93,39 +88,21 @@ func compare(fieldValue interface{}, literal *sqlparser.ComparisonExpr, op sqlpa
 		}
 		switch op {
 		case sqlparser.EqualOp:
-			return f64 == litVal
+			return f64Val == litVal
 		case sqlparser.NotEqualOp:
-			return f64 != litVal
+			return f64Val != litVal
 		case sqlparser.LessThanOp:
-			return f64 < litVal
+			return f64Val < litVal
 		case sqlparser.LessEqualOp:
-			return f64 <= litVal
+			return f64Val <= litVal
 		case sqlparser.GreaterThanOp:
-			return f64 > litVal
+			return f64Val > litVal
 		case sqlparser.GreaterEqualOp:
-			return f64 >= litVal
+			return f64Val >= litVal
 		default:
 			panic("unhandled default case")
 		}
-	} else if str, ok := fieldValue.(string); ok {
-		litStr := sqlparser.String(literal)
-		switch op {
-		case sqlparser.EqualOp:
-			return str == litStr
-		case sqlparser.NotEqualOp:
-			return str != litStr
-		case sqlparser.LessThanOp:
-			return str < litStr
-		case sqlparser.LessEqualOp:
-			return str <= litStr
-		case sqlparser.GreaterThanOp:
-			return str > litStr
-		case sqlparser.GreaterEqualOp:
-			return str >= litStr
-		default:
-			panic("unhandled default case")
-		}
-	} else if b, ok := fieldValue.(bool); ok {
+	} else if booleanVal, err := strconv.ParseBool(stringFieldValue); err == nil {
 		litStr := sqlparser.String(literal)
 		value, err := strconv.ParseBool(litStr)
 		if err != nil {
@@ -133,21 +110,36 @@ func compare(fieldValue interface{}, literal *sqlparser.ComparisonExpr, op sqlpa
 		}
 		switch op {
 		case sqlparser.EqualOp:
-			return b == value
+			return booleanVal == value
 		case sqlparser.NotEqualOp:
-			return b != value
+			return booleanVal != value
+		default:
+			panic("unhandled default case")
+		}
+	} else if strVal, ok := fieldValue.(string); ok {
+		litStr := sqlparser.String(literal)
+		switch op {
+		case sqlparser.EqualOp:
+			return strVal == litStr
+		case sqlparser.NotEqualOp:
+			return strVal != litStr
+		case sqlparser.LessThanOp:
+			return strVal < litStr
+		case sqlparser.LessEqualOp:
+			return strVal <= litStr
+		case sqlparser.GreaterThanOp:
+			return strVal > litStr
+		case sqlparser.GreaterEqualOp:
+			return strVal >= litStr
 		default:
 			panic("unhandled default case")
 		}
 	}
-
 	return false
 }
 
-// objectToMap converts any struct into a map[string]interface{} using JSON marshaling.
-func objectToMap[T any](obj T) (map[string]interface{}, error) {
-	var data T
-	jsonValue, err := sonic.Marshal(data)
+func objectToMap(obj any) (map[string]interface{}, error) {
+	jsonValue, err := sonic.Marshal(obj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal data to JSON: %w", err)
 	}

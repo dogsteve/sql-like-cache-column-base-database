@@ -12,7 +12,6 @@ type QueryResult struct {
 	RowsAffected uint64
 }
 
-// SQL Session
 type SqlSession struct {
 	DatabaseName string
 }

@@ -86,17 +86,20 @@ func (ttlMap *TTLMap[K, V]) Items(consumer func(key K, value *V) bool) {
 }
 
 func (ttlMap *TTLMap[K, V]) Range(consumer func(index int, value V) bool, offset *uint64, limit *uint64) {
-
 	now := time.Now().UnixNano()
 	keys := make([]K, 0)
-	//go ttlMap.cleanExpiredItems()
+
+	ttlMap.innerMap.Range(func(k, v any) bool {
+		item := v.(Item[V])
+		if item.expiration == -1 || now <= item.expiration {
+			keys = append(keys, k.(K))
+		}
+		return true
+	})
 
 	var start uint64 = 0
 	if offset != nil {
 		start = *offset
-	}
-	if start >= uint64(len(keys)) {
-		return
 	}
 	keys = keys[start:]
 
@@ -106,11 +109,9 @@ func (ttlMap *TTLMap[K, V]) Range(consumer func(index int, value V) bool, offset
 			keys = keys[:lim]
 		}
 	}
-
 	for i, k := range keys {
 		if val, ok := ttlMap.innerMap.Load(k); ok {
 			item := val.(Item[V])
-
 			if item.expiration == -1 || now <= item.expiration {
 				if !consumer(i, *item.value) {
 					break

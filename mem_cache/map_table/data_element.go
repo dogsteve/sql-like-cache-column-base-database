@@ -4,12 +4,16 @@ import (
 	datastructure "a-eighty/data_structure/map"
 	data_structure_slice "a-eighty/data_structure/slice"
 	"a-eighty/data_structure/stream"
-	"fmt"
+	"a-eighty/utils"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/google/uuid"
 )
+
+type WrapperNode struct {
+	Index int
+	Value map[string]any
+}
 
 type DataTable struct {
 	tableName string
@@ -42,7 +46,7 @@ type DataTable struct {
 			"val3" -> object1, object2
 			"val2" -> object3
 	*/
-	valueToReferenceMap datastructure.TTLMap[string, datastructure.TTLMap[string, data_structure_slice.TTLSlice[map[string]any]]]
+	valueToReferenceMap datastructure.TTLMap[string, datastructure.TTLMap[any, data_structure_slice.TTLSlice[WrapperNode]]]
 }
 
 func NewDataTable(tableName string) *DataTable {
@@ -52,36 +56,37 @@ func NewDataTable(tableName string) *DataTable {
 	return &DataTable{
 		sharedKey:           uuid.NewString(),
 		listData:            *data_structure_slice.NewTTLSlice[map[string]any](),
-		valueToReferenceMap: *datastructure.NewTTLMap[string, datastructure.TTLMap[string, data_structure_slice.TTLSlice[map[string]any]]](),
+		valueToReferenceMap: *datastructure.NewTTLMap[string, datastructure.TTLMap[any, data_structure_slice.TTLSlice[WrapperNode]]](),
 	}
 }
 
 func (tdm *DataTable) Insert(data map[string]any, ttl time.Duration) error {
-	jsonValue, err := sonic.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("failed to marshal data to JSON: %w", err)
-	}
-
-	var objectStructureMap map[string]interface{}
-	err = sonic.Unmarshal(jsonValue, &objectStructureMap)
-	if err != nil {
-		return fmt.Errorf("failed to unmarshal JSON to map: %w", err)
-	}
 
 	tdm.listData.Append(data, ttl)
+	lastedIndex := tdm.listData.Len()
 
-	for key, value := range objectStructureMap {
-		valueString := fmt.Sprintf("%v", value)
-
+	for key, value := range data {
+		wrappedNode := WrapperNode{
+			Index: lastedIndex,
+			Value: data,
+		}
 		if innerValueMap, ok := tdm.valueToReferenceMap.Get(key); !ok {
-			dataList := data_structure_slice.NewTTLSlice[map[string]any]()
-			dataList.Append(data, ttl)
-			newInnerValueMap := datastructure.NewTTLMap[string, data_structure_slice.TTLSlice[map[string]any]]()
-			newInnerValueMap.Set(valueString, dataList, ttl)
-			tdm.valueToReferenceMap.Set(key, newInnerValueMap, ttl)
+
+			newDataList := data_structure_slice.NewTTLSlice[WrapperNode]()
+			newDataList.Append(wrappedNode, ttl)
+			newInnerValueMap := datastructure.NewTTLMap[any, data_structure_slice.TTLSlice[WrapperNode]]()
+			newInnerValueMap.Set(value, newDataList, -1)
+			tdm.valueToReferenceMap.Set(key, newInnerValueMap, -1)
 		} else {
-			dataList, _ := innerValueMap.Get(valueString)
-			dataList.Append(data, ttl)
+
+			containedFieldValueMap, contain := innerValueMap.Get(value)
+			if contain {
+				containedFieldValueMap.Append(wrappedNode, ttl)
+			} else {
+				containedFieldValueMap = data_structure_slice.NewTTLSlice[WrapperNode]()
+				containedFieldValueMap.Append(wrappedNode, ttl)
+				innerValueMap.Set(value, containedFieldValueMap, -1)
+			}
 		}
 	}
 
@@ -96,19 +101,32 @@ func (tdm *DataTable) GetDataByIndex(index int) (map[string]any, bool) {
 }
 
 func (tdm *DataTable) QueryWithCriteria(predicate func(map[string]any) bool, sort func(a, b map[string]any) bool, limit, offset *uint64) []map[string]any {
-	filteredValues := make([]map[string]any, 0)
-	tdm.valueToReferenceMap.Items(func(parentKey string, mapValue *datastructure.TTLMap[string, data_structure_slice.TTLSlice[map[string]any]]) bool {
-		mapValue.Items(func(key string, sliceValue *data_structure_slice.TTLSlice[map[string]any]) bool {
+	filteredValuesMap := make(map[uint64]map[string]any)
+	tdm.valueToReferenceMap.Items(func(parentKey string, mapValue *datastructure.TTLMap[any, data_structure_slice.TTLSlice[WrapperNode]]) bool {
+		mapValue.Items(func(key any, sliceValue *data_structure_slice.TTLSlice[WrapperNode]) bool {
 			builtMap := map[string]any{
 				parentKey: key,
 			}
 			if predicate(builtMap) {
-				filteredValues = append(filteredValues, sliceValue.GetAll()...)
+				sliceValue.Range(func(index int, value WrapperNode) bool {
+					val := value.Value
+					hashVal, err := utils.HashObject_XXHash(val)
+					if err != nil {
+						return true
+					}
+					filteredValuesMap[hashVal] = val
+					return true
+				}, nil, nil)
 			}
 			return true
 		})
 		return true
 	})
+	var filteredValues = make([]map[string]any, 0)
+	for _, val := range filteredValuesMap {
+		filteredValues = append(filteredValues, val)
+	}
+
 	wrappedArray := data_structure_slice.ArraySlice[map[string]any]{
 		Array: filteredValues,
 	}
@@ -118,8 +136,8 @@ func (tdm *DataTable) QueryWithCriteria(predicate func(map[string]any) bool, sor
 
 func (tdm *DataTable) Delete(predicate func(map[string]any) bool) error {
 	tdm.listData.DeleteAll(predicate)
-	tdm.valueToReferenceMap.Items(func(parentKey string, mapValue *datastructure.TTLMap[string, data_structure_slice.TTLSlice[map[string]any]]) bool {
-		mapValue.Items(func(key string, _ *data_structure_slice.TTLSlice[map[string]any]) bool {
+	tdm.valueToReferenceMap.Items(func(parentKey string, mapValue *datastructure.TTLMap[any, data_structure_slice.TTLSlice[WrapperNode]]) bool {
+		mapValue.Items(func(key any, _ *data_structure_slice.TTLSlice[WrapperNode]) bool {
 			builtMap := map[string]any{
 				parentKey: key,
 			}
